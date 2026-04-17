@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import re
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
@@ -15,7 +16,7 @@ BOT_USERNAME = "AdultVault69bot"
 conn = sqlite3.connect("users.db", check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, join_date TEXT)")
-cursor.execute("CREATE TABLE IF NOT EXISTS media (id INTEGER PRIMARY KEY AUTOINCREMENT, file_id TEXT, type TEXT)")
+cursor.execute("CREATE TABLE IF NOT EXISTS media (id TEXT PRIMARY KEY, file_id TEXT, type TEXT, name TEXT)")
 conn.commit()
 
 # --- HELPERS ---
@@ -26,14 +27,21 @@ async def check_join(bot, user_id):
     except: return False
 
 async def send_content(bot, user_id, media_id):
-    cursor.execute("SELECT file_id, type FROM media WHERE id=?", (media_id,))
+    cursor.execute("SELECT file_id, type, name FROM media WHERE id=?", (media_id,))
     res = cursor.fetchone()
     if res:
-        file_id, m_type = res
-        if m_type == "photo": await bot.send_photo(user_id, file_id, caption="✨ Here is your photo!")
-        else: await bot.send_video(user_id, file_id, caption="✨ Here is your video!")
+        file_id, m_type, name = res
+        caption = f"✨ **File:** {name}"
+        if m_type == "photo": await bot.send_photo(user_id, file_id, caption=caption, parse_mode="Markdown")
+        elif m_type == "video": await bot.send_video(user_id, file_id, caption=caption, parse_mode="Markdown")
+        elif m_type == "audio": await bot.send_audio(user_id, file_id, caption=caption, parse_mode="Markdown")
+        elif m_type == "animation": await bot.send_animation(user_id, file_id, caption=caption, parse_mode="Markdown")
+        else: await bot.send_document(user_id, file_id, caption=caption, parse_mode="Markdown")
     else:
         await bot.send_message(user_id, "❌ Sorry, this content is no longer available.")
+
+def slugify(text):
+    return re.sub(r'[^a-zA-Z0-9_-]', '_', text.strip().replace(" ", "_"))
 
 # --- HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -41,7 +49,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     media_id = args[0] if args else None
 
-    # Save user to DB
     cursor.execute("INSERT OR IGNORE INTO users (user_id, join_date) VALUES (?, ?)", 
                    (user_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     conn.commit()
@@ -50,7 +57,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if media_id:
             await send_content(context.bot, user_id, media_id)
         else:
-            await update.message.reply_text("✅ Welcome! Join our channel to get the latest updates.")
+            await update.message.reply_text("✅ Welcome! Use a link to access content.")
     else:
         context.user_data["pending_id"] = media_id
         keyboard = [[InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK)],
@@ -61,10 +68,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     keyboard = [
-        [InlineKeyboardButton("📁 Add Media", callback_data="admin_add"), InlineKeyboardButton("📢 Broadcast", callback_data="admin_cast")],
-        [InlineKeyboardButton("📊 Stats", callback_data="admin_stats")]
+        [InlineKeyboardButton("📁 Add Media (Stay On)", callback_data="admin_add"), InlineKeyboardButton("📢 Broadcast", callback_data="admin_cast")],
+        [InlineKeyboardButton("📊 Stats", callback_data="admin_stats"), InlineKeyboardButton("🛑 Stop Action", callback_data="admin_stop")]
     ]
-    await update.message.reply_text("🔐 **Admin Panel**\nChoose an action:", 
+    await update.message.reply_text("🔐 **Admin Panel**\n\n'Add Media' mode will stay active until you click 'Stop Action'.", 
                                    reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -78,49 +85,76 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             media_id = context.user_data.get("pending_id")
             if media_id:
                 await send_content(context.bot, user_id, media_id)
-                await query.edit_message_text("✅ Thank you for joining! Sending your content...")
+                await query.edit_message_text("✅ Access granted! Sending your content...")
             else:
-                await query.edit_message_text("✅ Thank you for joining! Use a link to get content.")
+                await query.edit_message_text("✅ Access granted!")
         else:
             await query.answer("❌ You haven't joined yet!", show_alert=True)
             
     elif user_id == ADMIN_ID:
         if data == "admin_add":
             context.user_data["action"] = "add_media"
-            await query.edit_message_text("📁 **Upload Mode:** Send the Photo or Video you want to save.", parse_mode="Markdown")
+            await query.edit_message_text("📁 **Continuous Upload Mode Enabled!**\n\nSend any Photo, Video, Audio, or File.\n\n💡 *Tip: Add a caption to the file to set a custom link name!*", parse_mode="Markdown")
+        elif data == "admin_stop":
+            context.user_data["action"] = None
+            await query.edit_message_text("✅ All admin actions stopped.", parse_mode="Markdown")
         elif data == "admin_cast":
             context.user_data["action"] = "broadcast"
-            await query.edit_message_text("📢 **Broadcast Mode:** Send the message (Text/Photo/Video) you want to send to all users.", parse_mode="Markdown")
+            await query.edit_message_text("📢 **Broadcast Mode:** Send anything to send to all users.", parse_mode="Markdown")
         elif data == "admin_stats":
             cursor.execute("SELECT COUNT(*) FROM users")
             count = cursor.fetchone()[0]
             await query.edit_message_text(f"📊 **Total Bot Users:** {count}", parse_mode="Markdown")
 
-async def handle_media_or_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    if user_id != ADMIN_ID: return
+    
     action = context.user_data.get("action")
     msg = update.message
-    
-    print(f"Message from {user_id}, Action: {action}") # Debug log
-
-    if user_id != ADMIN_ID:
-        print(f"UNAUTHORIZED: User {user_id} tried to use admin features.")
-        # Optional: Uncomment the next line to let the user know their ID
-        # await msg.reply_text(f"Your ID is {user_id}. If you are the admin, update ADMIN_ID in the code.")
-        return
 
     if action == "add_media":
-        if msg.photo or msg.video:
-            m_type = "photo" if msg.photo else "video"
-            file_id = msg.photo[-1].file_id if msg.photo else msg.video.file_id
-            cursor.execute("INSERT INTO media (file_id, type) VALUES (?, ?)", (file_id, m_type))
+        file_id = None
+        m_type = None
+        name = "File"
+
+        if msg.photo:
+            file_id = msg.photo[-1].file_id
+            m_type = "photo"
+            name = msg.caption if msg.caption else f"photo_{datetime.now().strftime('%M%S')}"
+        elif msg.video:
+            file_id = msg.video.file_id
+            m_type = "video"
+            name = msg.caption if msg.caption else (msg.video.file_name if msg.video.file_name else "video")
+        elif msg.audio:
+            file_id = msg.audio.file_id
+            m_type = "audio"
+            name = msg.caption if msg.caption else (msg.audio.file_name if msg.audio.file_name else "audio")
+        elif msg.animation:
+            file_id = msg.animation.file_id
+            m_type = "animation"
+            name = msg.caption if msg.caption else "gif"
+        elif msg.document:
+            file_id = msg.document.file_id
+            m_type = "document"
+            name = msg.caption if msg.caption else (msg.document.file_name if msg.document.file_name else "file")
+        
+        if file_id:
+            # Generate Link Name (Slug)
+            link_id = slugify(name)
+            # Ensure unique in DB
+            cursor.execute("SELECT id FROM media WHERE id=?", (link_id,))
+            if cursor.fetchone():
+                link_id = f"{link_id}_{datetime.now().strftime('%S')}"
+            
+            cursor.execute("INSERT INTO media (id, file_id, type, name) VALUES (?, ?, ?, ?)", 
+                           (link_id, file_id, m_type, name))
             conn.commit()
-            new_id = cursor.lastrowid
-            share_link = f"https://t.me/{BOT_USERNAME}?start={new_id}"
-            await msg.reply_text(f"✅ **Media Saved!**\n\nLink: `{share_link}`", parse_mode="Markdown")
-            context.user_data["action"] = None
+            
+            share_link = f"https://t.me/{BOT_USERNAME}?start={link_id}"
+            await msg.reply_text(f"✅ **Saved as:** {name}\n🔗 **Link:** `{share_link}`\n\n*Still in Upload Mode...*", parse_mode="Markdown")
         else:
-            await msg.reply_text("❌ Please send a Photo or Video.")
+            await msg.reply_text("❌ Please send a Photo, Video, Audio, or Document.")
 
     elif action == "broadcast":
         cursor.execute("SELECT user_id FROM users")
@@ -139,7 +173,7 @@ app = ApplicationBuilder().token(BOT_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("admin", admin))
 app.add_handler(CallbackQueryHandler(callback))
-app.add_handler(MessageHandler(filters.ALL, handle_media_or_text))
+app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_all))
 
-print("Admin File Store Bot is running...")
+print("Pro File Store Bot is running...")
 app.run_polling()
