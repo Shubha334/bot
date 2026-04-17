@@ -1,7 +1,7 @@
 import os
 import sqlite3
-import re
 import secrets
+import string
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
@@ -13,14 +13,21 @@ CHANNEL_LINK = os.getenv("CHANNEL_LINK", "https://t.me/AdultVault")
 ADMIN_ID = 7146755377
 BOT_USERNAME = "AdultVault69bot"
 
-# --- DB SETUP ---
-conn = sqlite3.connect("users.db", check_same_thread=False)
+# --- DB SETUP (Persistent Path for Railway/VPS) ---
+# If you use a Volume on Railway, set DB_PATH to something like "/data/users.db"
+DB_PATH = os.getenv("DB_PATH", "users.db")
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cursor = conn.cursor()
 cursor.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, join_date TEXT)")
 cursor.execute("CREATE TABLE IF NOT EXISTS media (id TEXT PRIMARY KEY, file_id TEXT, type TEXT, name TEXT)")
 conn.commit()
 
 # --- HELPERS ---
+def generate_unique_id(length=10):
+    """Generates a random, hard-to-guess ID."""
+    chars = string.ascii_letters + string.digits
+    return "".join(secrets.choice(chars) for _ in range(length))
+
 async def check_join(bot, user_id):
     try:
         member = await bot.get_chat_member(CHANNEL_ID, user_id)
@@ -55,7 +62,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if media_id:
             await send_content(context.bot, user_id, media_id)
         else:
-            await update.message.reply_text("✅ Welcome! Use a link to access content.")
+            await update.message.reply_text("✅ Welcome! Join our channel to access content.")
     else:
         context.user_data["pending_id"] = media_id
         keyboard = [[InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK)],
@@ -104,15 +111,14 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(f"📊 **Total Bot Users:** {count}", parse_mode="Markdown")
 
 async def handle_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID: return
+    if update.effective_user.id != ADMIN_ID: return
     
     action = context.user_data.get("action")
     msg = update.message
 
     if action == "add_media":
         file_id = None
-        m_type = None
+        m_type = "document"
         name = "File"
 
         if msg.photo:
@@ -137,9 +143,10 @@ async def handle_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
             name = msg.caption if msg.caption else (msg.document.file_name if msg.document.file_name else "File")
         
         if file_id:
-            # Generate a random SECURE ID
-            link_id = secrets.token_urlsafe(8) 
+            # Generate a truly unique and random ID
+            link_id = generate_unique_id(12)
             
+            # Save to DB
             cursor.execute("INSERT INTO media (id, file_id, type, name) VALUES (?, ?, ?, ?)", 
                            (link_id, file_id, m_type, name))
             conn.commit()
@@ -168,5 +175,5 @@ app.add_handler(CommandHandler("admin", admin))
 app.add_handler(CallbackQueryHandler(callback))
 app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_all))
 
-print("Secure File Store Bot is running...")
+print("Final Secure Bot is running...")
 app.run_polling()
