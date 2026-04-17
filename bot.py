@@ -97,10 +97,17 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(f"📊 **Total Bot Users:** {count}", parse_mode="Markdown")
 
 async def handle_media_or_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
-    
+    user_id = update.effective_user.id
     action = context.user_data.get("action")
     msg = update.message
+    
+    print(f"Message from {user_id}, Action: {action}") # Debug log
+
+    if user_id != ADMIN_ID:
+        print(f"UNAUTHORIZED: User {user_id} tried to use admin features.")
+        # Optional: Uncomment the next line to let the user know their ID
+        # await msg.reply_text(f"Your ID is {user_id}. If you are the admin, update ADMIN_ID in the code.")
+        return
 
     if action == "add_media":
         if msg.photo or msg.video:
@@ -132,7 +139,7 @@ app = ApplicationBuilder().token(BOT_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler("admin", admin))
 app.add_handler(CallbackQueryHandler(callback))
-app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.TEXT & ~filters.COMMAND, handle_media_or_text))
+app.add_handler(MessageHandler(filters.ALL, handle_media_or_text))
 
 print("Admin File Store Bot is running...")
 app.run_polling()
