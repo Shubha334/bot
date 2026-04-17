@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import re
+import secrets
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
@@ -40,9 +41,6 @@ async def send_content(bot, user_id, media_id):
     else:
         await bot.send_message(user_id, "❌ Sorry, this content is no longer available.")
 
-def slugify(text):
-    return re.sub(r'[^a-zA-Z0-9_-]', '_', text.strip().replace(" ", "_"))
-
 # --- HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -68,11 +66,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     keyboard = [
-        [InlineKeyboardButton("📁 Add Media (Stay On)", callback_data="admin_add"), InlineKeyboardButton("📢 Broadcast", callback_data="admin_cast")],
+        [InlineKeyboardButton("📁 Add Media", callback_data="admin_add"), InlineKeyboardButton("📢 Broadcast", callback_data="admin_cast")],
         [InlineKeyboardButton("📊 Stats", callback_data="admin_stats"), InlineKeyboardButton("🛑 Stop Action", callback_data="admin_stop")]
     ]
-    await update.message.reply_text("🔐 **Admin Panel**\n\n'Add Media' mode will stay active until you click 'Stop Action'.", 
-                                   reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    await update.message.reply_text("🔐 **Admin Panel**", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
 async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -94,13 +91,13 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif user_id == ADMIN_ID:
         if data == "admin_add":
             context.user_data["action"] = "add_media"
-            await query.edit_message_text("📁 **Continuous Upload Mode Enabled!**\n\nSend any Photo, Video, Audio, or File.\n\n💡 *Tip: Add a caption to the file to set a custom link name!*", parse_mode="Markdown")
+            await query.edit_message_text("📁 **Continuous Upload Mode Enabled!**\nSend media to get secure links.", parse_mode="Markdown")
         elif data == "admin_stop":
             context.user_data["action"] = None
             await query.edit_message_text("✅ All admin actions stopped.", parse_mode="Markdown")
         elif data == "admin_cast":
             context.user_data["action"] = "broadcast"
-            await query.edit_message_text("📢 **Broadcast Mode:** Send anything to send to all users.", parse_mode="Markdown")
+            await query.edit_message_text("📢 **Broadcast Mode Enabled!**", parse_mode="Markdown")
         elif data == "admin_stats":
             cursor.execute("SELECT COUNT(*) FROM users")
             count = cursor.fetchone()[0]
@@ -121,38 +118,34 @@ async def handle_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if msg.photo:
             file_id = msg.photo[-1].file_id
             m_type = "photo"
-            name = msg.caption if msg.caption else f"photo_{datetime.now().strftime('%M%S')}"
+            name = msg.caption if msg.caption else f"Photo_{datetime.now().strftime('%M%S')}"
         elif msg.video:
             file_id = msg.video.file_id
             m_type = "video"
-            name = msg.caption if msg.caption else (msg.video.file_name if msg.video.file_name else "video")
+            name = msg.caption if msg.caption else (msg.video.file_name if msg.video.file_name else "Video")
         elif msg.audio:
             file_id = msg.audio.file_id
             m_type = "audio"
-            name = msg.caption if msg.caption else (msg.audio.file_name if msg.audio.file_name else "audio")
+            name = msg.caption if msg.caption else (msg.audio.file_name if msg.audio.file_name else "Audio")
         elif msg.animation:
             file_id = msg.animation.file_id
             m_type = "animation"
-            name = msg.caption if msg.caption else "gif"
+            name = msg.caption if msg.caption else "GIF"
         elif msg.document:
             file_id = msg.document.file_id
             m_type = "document"
-            name = msg.caption if msg.caption else (msg.document.file_name if msg.document.file_name else "file")
+            name = msg.caption if msg.caption else (msg.document.file_name if msg.document.file_name else "File")
         
         if file_id:
-            # Generate Link Name (Slug)
-            link_id = slugify(name)
-            # Ensure unique in DB
-            cursor.execute("SELECT id FROM media WHERE id=?", (link_id,))
-            if cursor.fetchone():
-                link_id = f"{link_id}_{datetime.now().strftime('%S')}"
+            # Generate a random SECURE ID
+            link_id = secrets.token_urlsafe(8) 
             
             cursor.execute("INSERT INTO media (id, file_id, type, name) VALUES (?, ?, ?, ?)", 
                            (link_id, file_id, m_type, name))
             conn.commit()
             
             share_link = f"https://t.me/{BOT_USERNAME}?start={link_id}"
-            await msg.reply_text(f"✅ **Saved as:** {name}\n🔗 **Link:** `{share_link}`\n\n*Still in Upload Mode...*", parse_mode="Markdown")
+            await msg.reply_text(f"✅ **Saved:** {name}\n🔗 **Secure Link:** `{share_link}`", parse_mode="Markdown")
         else:
             await msg.reply_text("❌ Please send a Photo, Video, Audio, or Document.")
 
@@ -175,5 +168,5 @@ app.add_handler(CommandHandler("admin", admin))
 app.add_handler(CallbackQueryHandler(callback))
 app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_all))
 
-print("Pro File Store Bot is running...")
+print("Secure File Store Bot is running...")
 app.run_polling()
