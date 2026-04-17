@@ -7,7 +7,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
 
 # --- CONFIG ---
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8711712077:AAGttnHmlvabk_fNixHK5wTcYI9jPH-EO94")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8711712077:AAFf8u2vrgak6Nbp2VYQhICCMGVQOeWwfOg")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@AdultVault")
 CHANNEL_LINK = os.getenv("CHANNEL_LINK", "https://t.me/AdultVault")
 ADMIN_ID = 7146755377
